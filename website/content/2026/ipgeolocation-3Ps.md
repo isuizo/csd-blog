@@ -3,7 +3,6 @@
 title = "The 3Ps of IP Geolocation: Pizza, Policy, and Performance"
 # Date must be written in YYYY-MM-DD format. This should be updated right before the final PR is made.
 date = 2026-04-06
-
 [taxonomies]
 # Keep any areas that apply, removing ones that don't. Do not add new areas!
 areas = ["Systems"]
@@ -20,9 +19,11 @@ committee = [
     {name = "Noah Singer", url = "https://www.noahsinger.org"},
 ]
 +++
+TODO fix alt text for everything
+
 IP Geolocation services are prolific on the Internet today. They're used in a variety of applications including fraud detection, targeted advertising, and localized recommendations. While these geolocation providers may employ different approaches, they all aim to answer the seemingly simple question: Given an IP address, where is this IP address located?
 
-For example, a query to IPInfo `curl ipinfo.io/128.2.208.106` results in the response:
+Sample response to query using IPInfo `curl ipinfo.io/128.2.208.106`:
 
 ```
 {
@@ -51,18 +52,32 @@ Hence, we formalize these fundamental challenges of geolocation as three distinc
 3. <span style="font-variant:small-caps;">Performance</span> - When considering performance, applications want to estimate an IP's location in the network to identify optimal replica mappings nearby. Content delivery networks (CDNs) and cloud providers are applications that typically belong in this category. Wikipedia, a geo-replicated service, uses IP geolocation to determine which cache to map users to. In this case, Wikipedia cares about the *network* location of the IP.
 ![todo: ALT TEXT](./bifurcation.png)
 
-In the rest of this article, we provide intuition for why these use cases must be handled separately, then present measurements that highlight the consequences of conflating our three notions of geolocation. For the sake of simplicity, we delve into the challenges of conflating pizza locations with policy/performance queries. However, more dimensions are explored in the full paper. 
+In the rest of this article, we provide intuition for why these use cases must be handled separately, then present measurements that highlight the consequences of conflating our three notions of geolocation. For the sake of simplicity, we highlight two dimensions in this post, but further dimensions of analysis are available in the full paper. 
 
-## Key Findings:
-* Correctly mapping users based on network location instead of physical location can speed up propagation delay (time it takes for signal to reach destination) by up to 6.1x and on average by 24-41% depending on the service.
-* The impact of conflating network vs. physical location is highly dependent on the density of service replicas and routing infrastructure. Users in regions with sparse service replicas and routing infrastructure deployments (e.g. sub-Saharan Africa and Pacific Island nations) see the greatest improvements with network-aware mappings. 
-* Modern geolocation methods, specifically geofeeds, are susceptible to mislabeling jurisdiction in border regions. Over 29\% of Verizon and 84.9\% of T-Mobile geofeed regions touch 2 or more states. 
+1. Why can't we use pizza locations for policy queries?
+2. Why can't we use pizza locations for performance queries?
+
 
 # Why can't I use pizza locations for policy queries?
+At first glance, the <span style="font-variant:small-caps;">Pizza</span> and <span style="font-variant:small-caps;">Policy</span> queries seem to care about the same thing -- they both simply want to know where on Earth you are located. And it is true that the ideal answer of both <span style="font-variant:small-caps;">Pizza</span> and <span style="font-variant:small-caps;">Policy</span> use cases is the same when you have perfect data (say, GPS information). From a pragmatic standpoint, however, IP geolocation services have to deal with something we call **geolocation uncertainty** which derives from privacy preservation and limitations on measurement infrastructure. In reality, all services that care about IP geolocation do not (and some argue, should never) (TODO: footnote) have access to perfect location data. In practice, IP geolocation services must infer a user's location and instead report within a range of possible locations. 
+
+Consider the example below of a user in Geneva, CH. In Geneva, users are subject to Switzerland's data privacy laws (FADP), as opposed to GDPR which applies to EU member countries. For Policy queries, a response of "Switzerland" would be the ideal response to inform the service which policy to apply. However, for recommendation applications, a query concerning "Hikes near me", would prefer response with a range that is geographically distributed without regard for national borders, including eastern France. Hence, in light of geolocation uncertainty, it is important to consider whether the geolocation task cares about pinpointing the user to a specific location or a jurisdiction region. The cost of conflating these queries becomes more apparent when we dig into a mechanism that underlies many IP geolocation services today[^1]: geofeeds. 
+![todo: ALT TEXT](./geneva_gdpr_100km_zoomedout.png)
+
+## Geofeeds: Decent for locality, terrible for jurisdiction 
+So what are geofeeds, and how are IP geolocation services using them? Geofeeds[^2] are operator-published files which specify a mapping of subnet to physical location to enhance IP geolocation accuracy. Typically, operators will assign a user to a subnet that belongs to the city closest to the user[^3]. While this is a reasonable approach for localization tasks, this method of mapping completely disregards any notion of borders. Thus, this mechanism for geolocating users has the potential to mischaracterize the jurisdiction of users located in border regions. In the following sections, we quantify these potential cases for mis-characterizing jurisdiction across different providers. 
+
+### Drawing Voronoi Diagrams from Geofeeds
+For this study, we utilize Voronoi diagrams [^4] to gain insights into the prevalence of this problem. A Voronoi diagram is partitioning of a plane with n points into convex polygons such that each polygon contains exactly one generating point and every point in a given polygon is closer to its generating point than to any other. In this case, our plane is a map of countries and our generating points are the cities listed on an operator's geofeed. Hence, we can visualize the regions that map to each city and quantify how often these regions cross boundaries. 
+
+### Results
+We depict a Voronoi diagram for Deutsche Telekom. While most of the feed data is in Germany, there are additional cities in the geofeed beyond Germany's borders. As a minimum bound for the number of overlapping countries, we only take into account countries with cities present in the geofeed. 
+![todo: ALT TEXT](./europe_overlap_map.jpg)
+We find that outside of Germany, Deutsche Telekom's Voronoi regions often overlap multiple countries, reaching up to 7 overlapping countries for the region that corresponds to Budapest, Hungary. Even within Germany, we find some regions overlapping with other countries near Germany's borders. This graph demonstrates that denser geofeed cities may reduce the number of overlapping countries, but the problem is still relevant in border regions. Even taking into account the density of cities within Germany, we find that over 10% of Voronoi regions overlap with at least 2 countries. 
+![todo: ALT TEXT](./europe_overlap_hist.jpg)
+Henceforth, geofeeds may be a reasonable mapping for Pizza queries, where applications are concerned with approximating the location of a user, but fall short for policy tasks that are concerned with jurisdiction borders. 
 
 # Why can't I use pizza locations for performance queries?
-
-# Why can't I use pizza locations for performance locations?
 Before diving into the impacts of conflating network and physical location, let's first explore why we care about the distinction in the first place. For starters, what exactly is the network location? In this article, we describe network location as *the physical point where the user's traffic exits its ISP to peer with the rest of the Internet*. For most terrestrial users, the network location is relatively close in proximity to their physical location, as Internet exchange points exist in almost every major metropolitan city. However in some special cases, like satellite networks or remote regions, the closest peering point may actually be very far away. In the case of Starlink, a low-earth orbiting satellite network, the network location is synonymous with its point of presence (PoP), the component where all satellite traffic meets terrestrial traffic.
 In the figure above, we approximate the distance of client and PoP distances using two data sources published by Starlink. 
 1. [feed.csv](https://geoip.starlinkisp.net/feed.csv): A mapping of IP subnet to approximate location (e.g. `14.1.94.0/24,AU,AU-VIC,Melbourne,`)
@@ -97,24 +112,10 @@ Note: In this case, the smaller RTT stochastically dominates the other. This is 
 ![todo: ALT TEXT](./speed_probe.png)
 The figure above depicts the results for the 5 major services across 115 Starlink probes. Each bar is annotated with the median speedup using PoP mapping. From this graph, we conclude that for most probes, the probe and PoP mappings are idential (i.e., the server closest to probe is identical to closest to PoP). However, in the cases when they are different, the PoP mapping is generally more optimal and often stochastically dominates the probe mappings. Even in the case where stochastic dominance is not achieved in the mixed category (when one does not strictly stochastically dominate the other), it is still on average, more advantageous to have PoP-aware mappings. Today, there is evidence that most large services do have PoP-aware mappings either explicitly using information from ISPs like pops.csv or implicitly from performance-based mappings like Akamai. Please see our paper for a deeper dive into these results and comparisons between the RTTs of our PoP-aware mappings and state-of-the-art mappings. 
 
-# Localization vs. Jurisdiction
-The second fork is much more subtle. At first glance, the <span style="font-variant:small-caps;">Pizza</span> and <span style="font-variant:small-caps;">Policy</span> use cases appear to be the same -- they both simply want to know where on Earth you are located. And it is true that the ideal answer of both <span style="font-variant:small-caps;">Pizza</span> and <span style="font-variant:small-caps;">Policy</span> use cases is the same when you have perfect data (say, GPS information). From a pragmatic standpoint, however, IP geolocation services have to deal with something we call **geolocation uncertainty** which derives from privacy preservation and limitations on measurement infrastructure. In reality, all services that care about IP geolocation do not (and some argue, should never) have access to perfect location data. In practice, IP geolocation services must infer a user's location and instead report within a range of possible locations. As depicted in the example below, in <span style="font-variant:small-caps;">Pizza</span> use cases, the correct range has a tight radius, but can be geographically distributed without regard for borders. On the other hand, <span style="font-variant:small-caps;">Policy</span> use cases may have a wider radius of "acceptable" locations, but have a much lower tolerance for error at the jurisdiction level. For example, in the US, state-level geolocation is necessary, as several neighboring states like Pennsylvania and Ohio do have different policy on age-restricted content. Therefore, in light of geolocation uncertainty, it is important to consider whether the geolocation task cares about pinpointing the user to a specific location (<span style="font-variant:small-caps;">Pizza</span>) or a general region (<span style="font-variant:small-caps;">Policy</span>). This distinction becomes more apparent when we dig into a mechanism that underlies many IP geolocation services[^1] today: geofeeds. 
-![todo: ALT TEXT](./jurisdiction.png)
 
-## Geofeeds: Decent for locality, terrible for jurisdiction 
-So what are geofeeds, and how are IP geolocation services using them? Geofeeds[^2] are operator-published files which specify a mapping of subnet to physical location to enhance IP geolocation accuracy. Typically, operators will assign a user to a subnet that belongs to the city closest to the user[^3]. While this is a reasonable approach for localization tasks, this method of mapping completely disregards any notion of borders. Thus, this mechanism for geolocating users does have the potential to mischaracterize the jurisdiction of users located in border regions. In the following sections, we quantify these potential cases for mis-characterizing jurisdiction across different providers. 
-
-### Drawing Voronoi Diagrams from Geofeeds
-For this study, we utilize Voronoi diagrams [^4] to gain insights into the prevalence of this problem. A Voronoi diagram is partitioning of a plane with n points into convex polygons such that each polygon contains exactly one generating point and every point in a given polygon is closer to its generating point than to any other. In this case, our plane is a map of the United States and our generating points are the cities listed on an operator's geofeed. Hence, we can visualize the regions that map to each city and quantify how often these regions cross boundaries. 
-
-### Results
-We benchmark four different geofeeds: two mobile providers (Verizon and T-Mobile), one LEO satellite provider (Starlink), and one proxy service (Apple Private Cloud Relay). 
-![todo: ALT TEXT](./combined_us_overlapping_states_map.png)
-Based on the Voronoi diagrams drawn above, we find that this mechanism of mapping to the "nearest city" is highly susceptible to inferring jurisdiction wrong, but it is also highly dependent on the density of cities listed in the geofeed. Sparse geofeeds like T-Mobile (~75 cities) have large Voronoi regions that can cover up to 9 states. On the other hand, Apple Private Cloud Relay, which publishes an order of magnitude greater number of cities (~5100 cities) than the others has much smaller Voronoi regions. Still, the border issue is not entirely solved, as roughly 20\% of Apple regions still touch 2 or more states. Henceforth, even with fine granularity, geofeeds in their current deployment are still insufficient in solving the jurisdiction task. 
+# Summary
+In short, our data suggests that the community needs to stop treating IP geolocation as a one-size-fits-all tool and instead move towards a system in which geolocation services offer distinct APIs that are trifurcated along these three dimensions. While the challenges we talk about have been mentioned by others both implicitly and explicitly, our contribution is to provide data illuminating how fundamentally impossible it is to continue with the current regime. Our goal is to motivate the community to move towards geolocation solutions that explicitly subdivide these related but distinct tasks. If you'd like to learn more about our study, or even participate in our crowd-sourced dataset, please visit [whereareyouproject.org](https://whereareyouproject.org/).
 [^1]: IPInfo, Maxmind
 [^2]: https://datatracker.ietf.org/doc/rfc8805/
 [^3]: https://developer.apple.com/icloud/prepare-your-network-for-icloud-private-relay/
-[^4]: https://en.wikipedia.org/wiki/Voronoi_diagram
-
-# Summary
-In short, our data suggests that the community needs to stop treating IP geolocation as a one-size-fits-all tool and instead move towards a system in which geolocation services offer distinct APIs that are trifurcated along these three dimensions. While the challenges we talk about have been mentioned by others both implicitly and explicitly, our contribution is to provide data illuminating how fundamentally impossible it is to continue with the current regime. Our goal is to motivate the community to move towards geolocation solutions that explicitly subdivide these related but distinct tasks. If you'd like to learn more about our study, or even participate in our crowd-sourced dataset, please visit [whereareyouproject.org](https://whereareyouproject.org/). 
+[^4]: https://en.wikipedia.org/wiki/Voronoi_diagram 
